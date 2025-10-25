@@ -44,6 +44,28 @@ npm run dev
 - Server runs on port 3001
 - Client runs on port 3000 (proxied to server)
 
+### Network Access (Access from Another Laptop)
+
+When you start the server, it will display all available URLs including network URLs:
+
+```
+🚀 Server running on port 3001
+
+📡 Access URLs:
+   Local:    http://localhost:3001
+   Network:  http://192.168.1.100:3001
+```
+
+To access from another laptop on the same network:
+1. Use the Network URL shown when the server starts
+2. Or update `client/.env` with your IP address:
+   ```
+   REACT_APP_SERVER_URL=http://192.168.1.100:3001
+   ```
+3. Access the client at `http://YOUR_IP:3000` from the other laptop
+
+📖 See [NETWORK_ACCESS.md](NETWORK_ACCESS.md) for detailed network setup instructions.
+
 ## Production
 
 1. Build the React app:

@@ -5,6 +5,7 @@ const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const ServerScreenCapture = require('./services/serverScreenCapture');
+const RemoteControl = require('./services/remoteControl');
 
 const app = express();
 const server = http.createServer(app);
@@ -12,13 +13,22 @@ const server = http.createServer(app);
 // Initialize server-side screen capture
 const screenCapture = new ServerScreenCapture();
 
+// Initialize remote control
+const remoteControl = new RemoteControl();
+
 // Configure Socket.IO with CORS
 const io = socketIo(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
   },
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  allowUpgrades: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  maxHttpBufferSize: 50e6, // 50MB buffer for HD frames
+  perMessageDeflate: false,
+  httpCompression: false
 });
 
 const PORT = process.env.PORT || 3001;
@@ -85,6 +95,7 @@ app.use('/api', require('./routes/api'));
 // Make io and screenCapture available to API routes
 app.set('io', io);
 app.set('screenCapture', screenCapture);
+app.set('remoteControl', remoteControl);
 
 // Serve static files from React build (in production)
 if (process.env.NODE_ENV === 'production') {
@@ -118,7 +129,50 @@ io.on('connection', (socket) => {
   socket.emit('capture-status', {
     isCapturing: isServerCapturing,
     connectedClients: connectedClients,
+    remoteControlEnabled: remoteControl.isEnabled,
+    screenSize: remoteControl.getScreenSize(),
     ...screenCapture.getStatus()
+  });
+  
+  // Remote control events
+  socket.on('enable-remote-control', () => {
+    remoteControl.enable();
+    io.emit('remote-control-status', { enabled: true });
+    console.log('Remote control enabled by client:', socket.id);
+  });
+
+  socket.on('disable-remote-control', () => {
+    remoteControl.disable();
+    io.emit('remote-control-status', { enabled: false });
+    console.log('Remote control disabled by client:', socket.id);
+  });
+
+  socket.on('mouse-move', (data) => {
+    remoteControl.moveMouse(data);
+  });
+
+  socket.on('mouse-click', (data) => {
+    remoteControl.mouseClick(data);
+  });
+
+  socket.on('mouse-down', (data) => {
+    remoteControl.mouseDown(data);
+  });
+
+  socket.on('mouse-up', (data) => {
+    remoteControl.mouseUp(data);
+  });
+
+  socket.on('mouse-scroll', (data) => {
+    remoteControl.mouseScroll(data);
+  });
+
+  socket.on('key-press', (data) => {
+    remoteControl.keyPress(data);
+  });
+
+  socket.on('type-text', (data) => {
+    remoteControl.typeText(data);
   });
   
   // Handle disconnect
@@ -134,7 +188,33 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  const os = require('os');
+  const networkInterfaces = os.networkInterfaces();
+  const networkUrls = [];
+  
+  // Find all network interfaces
+  Object.keys(networkInterfaces).forEach(interfaceName => {
+    networkInterfaces[interfaceName].forEach(iface => {
+      // Skip internal and non-IPv4 addresses
+      if (iface.family === 'IPv4' && !iface.internal) {
+        networkUrls.push(`http://${iface.address}:${PORT}`);
+      }
+    });
+  });
+  
+  console.log(`\n🚀 Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log('\n📡 Access URLs:');
+  console.log(`   Local:    http://localhost:${PORT}`);
+  console.log(`   Local:    http://127.0.0.1:${PORT}`);
+  
+  if (networkUrls.length > 0) {
+    networkUrls.forEach(url => {
+      console.log(`   Network:  ${url}`);
+    });
+    console.log('\n✨ Use the Network URL to access from other devices on the same network\n');
+  } else {
+    console.log('   ⚠️  No network interfaces found. Make sure you\'re connected to a network.\n');
+  }
 });

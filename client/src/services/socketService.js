@@ -7,8 +7,12 @@ class SocketService {
   }
 
   connect(serverUrl = '') {
-    // In development, connect to backend server on port 3001
-    const url = serverUrl || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3001');
+    // Use environment variable if available, otherwise fallback to localhost
+    const url = serverUrl || 
+                process.env.REACT_APP_SERVER_URL || 
+                (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3001');
+    
+    console.log('Connecting to server:', url);
     
     this.socket = io(url, {
       transports: ['websocket', 'polling'],
@@ -16,6 +20,10 @@ class SocketService {
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      timeout: 10000,
+      upgrade: true,
+      forceNew: false,
+      ackTimeout: 5000
     });
 
     this.socket.on('connect', () => {
@@ -76,6 +84,66 @@ class SocketService {
   onCaptureError(callback) {
     if (this.socket) {
       this.socket.on('capture-error', callback);
+    }
+  }
+
+  onRemoteControlStatus(callback) {
+    if (this.socket) {
+      this.socket.on('remote-control-status', callback);
+    }
+  }
+
+  enableRemoteControl() {
+    if (this.socket) {
+      this.socket.emit('enable-remote-control');
+    }
+  }
+
+  disableRemoteControl() {
+    if (this.socket) {
+      this.socket.emit('disable-remote-control');
+    }
+  }
+
+  sendMouseMove(data) {
+    if (this.socket) {
+      this.socket.emit('mouse-move', data);
+    }
+  }
+
+  sendMouseClick(data) {
+    if (this.socket) {
+      this.socket.emit('mouse-click', data);
+    }
+  }
+
+  sendMouseDown(data) {
+    if (this.socket) {
+      this.socket.emit('mouse-down', data);
+    }
+  }
+
+  sendMouseUp(data) {
+    if (this.socket) {
+      this.socket.emit('mouse-up', data);
+    }
+  }
+
+  sendMouseScroll(data) {
+    if (this.socket) {
+      this.socket.emit('mouse-scroll', data);
+    }
+  }
+
+  sendKeyPress(data) {
+    if (this.socket) {
+      this.socket.emit('key-press', data);
+    }
+  }
+
+  sendTypeText(data) {
+    if (this.socket) {
+      this.socket.emit('type-text', data);
     }
   }
 

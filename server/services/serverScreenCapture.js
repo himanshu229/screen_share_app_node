@@ -5,10 +5,13 @@ class ServerScreenCapture {
   constructor() {
     this.isCapturing = false;
     this.captureInterval = null;
-    this.frameRate = 120; // Target 120+ FPS
-    this.quality = 100; // JPEG quality (1-100)
+    this.frameRate = 45; // Higher FPS for more real-time feel
+    this.quality = 75; // Good balance of quality and speed
+    this.scale = 0.75; // 75% scale for balance
     this.frameCallbacks = new Set();
     this.lastScreenshot = null;
+    this.frameBuffer = null; // Pre-allocated buffer
+    this.isProcessing = false; // Prevent frame queue buildup
     this.captureOptions = {
       format: 'png', // screenshot-desktop format
       screen: 0, // Primary screen
@@ -50,15 +53,19 @@ class ServerScreenCapture {
     const intervalMs = Math.floor(1000 / this.frameRate);
 
     this.captureInterval = setInterval(async () => {
+      // Skip frame if still processing previous one (prevent queue buildup)
+      if (this.isProcessing) {
+        return;
+      }
+      
       try {
+        this.isProcessing = true;
         await this.captureFrame();
       } catch (error) {
         console.error('Error capturing frame:', error);
-        // Don't stop capture on individual frame errors, but reduce frequency
-        if (this.frameRate > 30) {
-          this.frameRate = Math.max(30, this.frameRate - 10);
-          console.log(`Reduced frame rate to ${this.frameRate} FPS due to capture errors`);
-        }
+        // Don't reduce frequency on errors in high-performance mode
+      } finally {
+        this.isProcessing = false;
       }
     }, intervalMs);
 
@@ -113,6 +120,8 @@ class ServerScreenCapture {
 
   // Capture a single frame
   async captureFrame() {
+    const startTime = Date.now();
+    
     try {
       // Take screenshot using screenshot-desktop
       const img = await screenshot(this.captureOptions);
@@ -122,35 +131,58 @@ class ServerScreenCapture {
         throw new Error('Empty screenshot data received - check screen recording permissions');
       }
       
-      // Get image metadata
-      const metadata = await sharp(img).metadata();
+      // Get image metadata (cached if possible)
+      const sharpInstance = sharp(img);
+      const metadata = await sharpInstance.metadata();
       
-      // Convert to JPEG with compression for faster transmission
-      const processedImg = await sharp(img)
+      // Calculate scaled dimensions
+      const scaledWidth = Math.round(metadata.width * this.scale);
+      const scaledHeight = Math.round(metadata.height * this.scale);
+      
+      // High-quality processing: resize with best quality and compress
+      const processedImg = await sharpInstance
+        .resize(scaledWidth, scaledHeight, {
+          fit: 'inside',
+          kernel: 'lanczos3', // Best quality interpolation
+          withoutEnlargement: true,
+          fastShrinkOnLoad: true
+        })
         .jpeg({ 
           quality: this.quality,
-          progressive: true,
-          mozjpeg: true // Better compression
+          progressive: false,
+          mozjpeg: true, // Better compression
+          chromaSubsampling: '4:2:0', // Balanced compression
+          trellisQuantisation: false, // Disable for speed
+          overshootDeringing: false, // Disable for speed
+          optimizeScans: false, // Disable for speed
+          optimizeCoding: true,
+          force: true
         })
-        .toBuffer();
+        .toBuffer({ resolveWithObject: false });
+
+      const encodeTime = Date.now() - startTime;
 
       // Convert to base64 for transmission
-      const base64Data = `data:image/jpeg;base64,${processedImg.toString('base64')}`;
+      const base64Data = processedImg.toString('base64');
 
-      // Create frame data object
+      // Create minimal frame data object (no extra metadata)
       const frameData = {
-        data: base64Data,
-        width: metadata.width,
-        height: metadata.height,
-        timestamp: Date.now(),
-        frameRate: this.frameRate,
-        quality: this.quality
+        d: base64Data, // Shortened property names for smaller payload
+        w: scaledWidth,
+        h: scaledHeight,
+        t: Date.now()
       };
 
       // Store last screenshot for reference
-      this.lastScreenshot = frameData;
+      this.lastScreenshot = {
+        data: `data:image/jpeg;base64,${base64Data}`,
+        width: scaledWidth,
+        height: scaledHeight,
+        timestamp: frameData.t,
+        encodeTime: encodeTime
+      };
 
-      // Send to all registered callbacks
+      // Send to all registered callbacks immediately (binary transfer)
       this.frameCallbacks.forEach(callback => {
         try {
           callback(frameData);
@@ -158,6 +190,11 @@ class ServerScreenCapture {
           console.error('Error in frame callback:', error);
         }
       });
+
+      // Log performance metrics periodically
+      if (Math.random() < 0.1) { // 10% of frames
+        console.log(`⚡ Frame encode: ${encodeTime}ms | Size: ${(processedImg.length / 1024).toFixed(1)}KB | FPS: ${this.frameRate}`);
+      }
 
     } catch (error) {
       // More specific error handling
@@ -175,6 +212,7 @@ class ServerScreenCapture {
       isCapturing: this.isCapturing,
       frameRate: this.frameRate,
       quality: this.quality,
+      scale: this.scale,
       callbackCount: this.frameCallbacks.size,
       lastFrameTime: this.lastScreenshot?.timestamp || null
     };
@@ -182,7 +220,7 @@ class ServerScreenCapture {
 
   // Update capture settings
   updateSettings(settings = {}) {
-    if (settings.frameRate && settings.frameRate > 0 && settings.frameRate <= 240) {
+    if (settings.frameRate && settings.frameRate > 0 && settings.frameRate <= 60) {
       this.frameRate = settings.frameRate;
       
       // Restart capture with new frame rate if currently capturing
@@ -196,6 +234,10 @@ class ServerScreenCapture {
       this.quality = settings.quality;
     }
 
+    if (settings.scale && settings.scale > 0 && settings.scale <= 1) {
+      this.scale = settings.scale;
+    }
+
     if (settings.screen !== undefined) {
       this.captureOptions.screen = settings.screen;
     }
@@ -203,6 +245,7 @@ class ServerScreenCapture {
     console.log('Updated capture settings:', {
       frameRate: this.frameRate,
       quality: this.quality,
+      scale: this.scale,
       screen: this.captureOptions.screen
     });
   }

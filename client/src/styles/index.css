@@ -68,6 +68,12 @@ body {
   transform: scale(0.95);
 }
 
+.control-btn.active {
+  background: rgba(0, 200, 0, 0.8);
+  border-color: rgba(0, 255, 0, 0.6);
+  box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
 .control-btn.primary {
   background: rgba(0, 123, 255, 0.7);
   border-color: rgba(0, 123, 255, 0.8);
