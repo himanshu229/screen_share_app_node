@@ -13,6 +13,7 @@ const ScreenShare = () => {
   const [screenSize, setScreenSize] = useState({ width: 1920, height: 1080 });
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
+  const [showButtons, setShowButtons] = useState(true);
   
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -22,6 +23,9 @@ const ScreenShare = () => {
   const rafId = useRef(null); // RequestAnimationFrame ID
   const lastMouseSendTime = useRef(0); // Throttle mouse events
   const mouseThrottleDelay = 16; // ~60 FPS for mouse (16ms)
+  const lastClickTime = useRef(0);
+  const doubleClickDelay = 300;
+  const buttonHideTimer = useRef(null);
 
   useEffect(() => {
     initializeConnection();
@@ -30,6 +34,36 @@ const ScreenShare = () => {
       cleanup();
     };
   }, []);
+
+  // Auto-hide buttons effect
+  useEffect(() => {
+    // Clear any existing timer on cleanup
+    return () => {
+      if (buttonHideTimer.current) {
+        clearTimeout(buttonHideTimer.current);
+      }
+    };
+  }, []);
+
+  // Handle button visibility based on control state
+  const resetButtonHideTimer = () => {
+    if (!remoteControlEnabled) {
+      return; // Don't hide if control is off
+    }
+
+    // Show buttons
+    setShowButtons(true);
+
+    // Clear existing timer
+    if (buttonHideTimer.current) {
+      clearTimeout(buttonHideTimer.current);
+    }
+
+    // Set new timer to hide after 3 seconds
+    buttonHideTimer.current = setTimeout(() => {
+      setShowButtons(false);
+    }, 3000);
+  };
 
   const initializeConnection = () => {
     try {
@@ -182,8 +216,14 @@ const ScreenShare = () => {
   const toggleRemoteControl = () => {
     if (remoteControlEnabled) {
       socketService.disableRemoteControl();
+      // Clear hide timer when turning off control
+      if (buttonHideTimer.current) {
+        clearTimeout(buttonHideTimer.current);
+      }
+      setShowButtons(true); // Show buttons when control is off
     } else {
       socketService.enableRemoteControl();
+      setShowButtons(false); // Hide buttons initially when control is on
     }
   };
 
@@ -248,6 +288,9 @@ const ScreenShare = () => {
     setCursorPosition({ x, y });
     setShowCursor(true);
 
+    // Don't reset timer on mouse movement inside screen when control is ON
+    // Timer resets only when mouse leaves the screen
+
     if (!remoteControlEnabled) return;
     
     // Throttle mouse move events to prevent network flooding
@@ -265,6 +308,11 @@ const ScreenShare = () => {
 
   const handleMouseLeave = () => {
     setShowCursor(false);
+    
+    // Show buttons when cursor leaves the screen area (while control is ON)
+    if (remoteControlEnabled) {
+      resetButtonHideTimer();
+    }
   };
 
   const handleMouseClick = (e) => {
@@ -359,19 +407,21 @@ const ScreenShare = () => {
 
   return (
     <div ref={containerRef} className="screen-share-container">
-      {/* Controls */}
-      <div className="controls">
-        <button className="control-btn" onClick={toggleFullscreen}>
-          {isFullscreen ? '🪟 Exit Fullscreen' : '🖥️ Fullscreen'}
-        </button>
-        <button 
-          className={`control-btn ${remoteControlEnabled ? 'active' : ''}`}
-          onClick={toggleRemoteControl}
-          title={remoteControlEnabled ? 'Disable Remote Control' : 'Enable Remote Control'}
-        >
-          {remoteControlEnabled ? '🎮 Control ON' : '🎮 Control OFF'}
-        </button>
-      </div>
+      {/* Controls - conditionally show/hide */}
+      {showButtons && (
+        <div className="controls">
+          <button className="control-btn" onClick={toggleFullscreen}>
+            {isFullscreen ? '🪟 Exit Fullscreen' : '🖥️ Fullscreen'}
+          </button>
+          <button 
+            className={`control-btn ${remoteControlEnabled ? 'active' : ''}`}
+            onClick={toggleRemoteControl}
+            title={remoteControlEnabled ? 'Disable Remote Control' : 'Enable Remote Control'}
+          >
+            {remoteControlEnabled ? '🎮 Control ON' : '🎮 Control OFF'}
+          </button>
+        </div>
+      )}
 
       {/* Screen Display */}
       {isCapturing ? (
