@@ -6,6 +6,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const ServerScreenCapture = require('./services/serverScreenCapture');
 const RemoteControl = require('./services/remoteControl');
+const AudioManager = require('./services/audioManager');
 
 const app = express();
 const server = http.createServer(app);
@@ -15,6 +16,9 @@ const screenCapture = new ServerScreenCapture();
 
 // Initialize remote control
 const remoteControl = new RemoteControl();
+
+// Initialize audio manager
+const audioManager = new AudioManager();
 
 // Configure Socket.IO with CORS
 const io = socketIo(server, {
@@ -59,11 +63,16 @@ const autoStartCapture = async () => {
       
       console.log('Server screen capture started successfully');
       
+      // Also start audio capture
+      const port = PORT || 3001;
+      audioManager.startAudioCapture(`http://localhost:${port}`);
+      
       // Notify all clients
       io.emit('capture-started');
       io.emit('capture-status', {
         isCapturing: isServerCapturing,
         connectedClients: connectedClients,
+        audioCapturing: audioManager.getStatus().isCapturing,
         ...screenCapture.getStatus()
       });
     } catch (error) {
@@ -86,24 +95,39 @@ const autoStopCapture = () => {
     screenCapture.stopCapture();
     screenCapture.removeFrameCallback(handleScreenFrame);
     isServerCapturing = false;
+    
+    // Also stop audio capture
+    audioManager.stopAudioCapture();
   }
 };
-
-// API Routes
-app.use('/api', require('./routes/api'));
 
 // Make io and screenCapture available to API routes
 app.set('io', io);
 app.set('screenCapture', screenCapture);
 app.set('remoteControl', remoteControl);
+app.set('audioManager', audioManager);
+
+// Set IO for audio manager
+audioManager.setIO(io);
+
+// API Routes (must come BEFORE static file serving)
+app.use('/api', require('./routes/api'));
 
 // Serve static files from React build (in production)
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/build')));
+  const buildPath = path.join(__dirname, '../client/build');
+  console.log('📁 Serving static files from:', buildPath);
+  console.log('📄 Index.html path:', path.join(buildPath, 'index.html'));
   
+  app.use(express.static(buildPath));
+  
+  // Catch-all route for React Router (must be last)
   app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
+    console.log('🔍 Serving index.html for route:', req.path);
+    res.sendFile(path.join(buildPath, 'index.html'));
   });
+} else {
+  console.log('🔧 Running in development mode - no static files served');
 }
 
 // Socket.IO connection handling
@@ -173,6 +197,12 @@ io.on('connection', (socket) => {
 
   socket.on('type-text', (data) => {
     remoteControl.typeText(data);
+  });
+  
+  // Handle audio chunks from Python directly
+  socket.on('audio-chunk', (audioData) => {
+    // Broadcast audio to all browser clients (not back to Python)
+    socket.broadcast.emit('audio-chunk', audioData);
   });
   
   // Handle disconnect

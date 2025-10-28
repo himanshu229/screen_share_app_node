@@ -87,6 +87,28 @@ class SocketService {
     }
   }
 
+  onAudioChunk(callback) {
+    if (this.socket) {
+      this.socket.on('audio-chunk', callback);
+    } else {
+      console.warn('⚠️ Cannot register audio-chunk listener: socket not initialized');
+    }
+  }
+
+  requestAudioStart() {
+    if (this.socket) {
+      console.log('📤 Requesting audio start from Python');
+      this.socket.emit('request-audio-start');
+    }
+  }
+
+  requestAudioStop() {
+    if (this.socket) {
+      console.log('📤 Requesting audio stop from Python');
+      this.socket.emit('request-audio-stop');
+    }
+  }
+
   onRemoteControlStatus(callback) {
     if (this.socket) {
       this.socket.on('remote-control-status', callback);

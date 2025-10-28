@@ -14,6 +14,7 @@ const ScreenShare = () => {
   const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
   const [showButtons, setShowButtons] = useState(true);
+  const [isAudioEnabled, setIsAudioEnabled] = useState(false);
   
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -26,12 +27,51 @@ const ScreenShare = () => {
   const lastClickTime = useRef(0);
   const doubleClickDelay = 300;
   const buttonHideTimer = useRef(null);
+  const audioContextRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const isPlayingAudioRef = useRef(false);
+  const isAudioEnabledRef = useRef(false); // Use ref to avoid stale closure
+  const nextPlayTimeRef = useRef(0); // Track next scheduled play time for smooth playback
+  const scheduledSourcesRef = useRef([]); // Track all scheduled sources
 
   useEffect(() => {
     initializeConnection();
     
     return () => {
       cleanup();
+    };
+  }, []);
+
+  // Initialize audio context
+  useEffect(() => {
+    const initAudio = async () => {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioContextRef.current = new AudioContext({
+          sampleRate: 48000, // Match server sample rate
+          latencyHint: 'interactive'
+        });
+        console.log('Audio context initialized:', audioContextRef.current.sampleRate);
+      } catch (error) {
+        console.error('Failed to initialize audio context:', error);
+      }
+    };
+
+    initAudio();
+
+    return () => {
+      if (audioContextRef.current) {
+        // Stop all scheduled sources
+        scheduledSourcesRef.current.forEach(source => {
+          try {
+            source.stop();
+          } catch (e) {
+            // Ignore if already stopped
+          }
+        });
+        scheduledSourcesRef.current = [];
+        audioContextRef.current.close();
+      }
     };
   }, []);
 
@@ -101,6 +141,14 @@ const ScreenShare = () => {
       }
     });
 
+    // Listen for audio chunks
+    socketService.onAudioChunk((audioData) => {
+      // Use ref instead of state to avoid stale closure
+      if (isAudioEnabledRef.current) {
+        playAudioChunk(audioData);
+      }
+    });
+
     // Listen for capture status changes
     socketService.onCaptureStatus((status) => {
       setIsCapturing(status.isCapturing);
@@ -141,6 +189,188 @@ const ScreenShare = () => {
         setPermissionError(true);
       }
     });
+  };
+
+  const playAudioChunk = async (audioData) => {
+    try {
+      if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        return;
+      }
+
+      // Resume audio context if suspended
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+
+      const audioContext = audioContextRef.current;
+
+      // Decode base64 audio data
+      const binaryString = atob(audioData.audio);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      // Convert Int16 to Float32
+      const int16Array = new Int16Array(bytes.buffer);
+      const float32Array = new Float32Array(int16Array.length);
+      for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32768.0;
+      }
+
+      // Create audio buffer
+      const numFrames = float32Array.length / audioData.channels;
+      const audioBuffer = audioContext.createBuffer(
+        audioData.channels,
+        numFrames,
+        audioData.sampleRate
+      );
+
+      // Fill channels
+      for (let channel = 0; channel < audioData.channels; channel++) {
+        const channelData = audioBuffer.getChannelData(channel);
+        for (let i = 0; i < numFrames; i++) {
+          channelData[i] = float32Array[i * audioData.channels + channel];
+        }
+      }
+
+      // Log occasionally
+      if (Math.random() < 0.05) {
+        console.log('🎵 Chunk:', {
+          duration: (audioBuffer.duration * 1000).toFixed(1) + 'ms',
+          queueSize: audioQueueRef.current.length,
+          bufferAhead: ((nextPlayTimeRef.current - audioContext.currentTime) * 1000).toFixed(0) + 'ms'
+        });
+      }
+
+      // Add to queue
+      audioQueueRef.current.push(audioBuffer);
+
+      // Start playing if not already playing
+      if (!isPlayingAudioRef.current) {
+        isPlayingAudioRef.current = true;
+        processAudioQueue();
+      }
+
+    } catch (error) {
+      console.error('❌ Error in playAudioChunk:', error);
+    }
+  };
+
+  const processAudioQueue = () => {
+    if (!isAudioEnabledRef.current || !audioContextRef.current) {
+      isPlayingAudioRef.current = false;
+      audioQueueRef.current = [];
+      nextPlayTimeRef.current = 0;
+      return;
+    }
+
+    const audioContext = audioContextRef.current;
+    const currentTime = audioContext.currentTime;
+
+    // Wait for initial buffer - need at least 5 chunks for smooth playback
+    if (audioQueueRef.current.length < 5 && nextPlayTimeRef.current <= currentTime) {
+      isPlayingAudioRef.current = false;
+      setTimeout(() => {
+        if (audioQueueRef.current.length > 0) {
+          processAudioQueue();
+        }
+      }, 50);
+      return;
+    }
+
+    // Initialize nextPlayTime with good buffer (100ms)
+    if (nextPlayTimeRef.current < currentTime) {
+      nextPlayTimeRef.current = currentTime + 0.1;
+      console.log('🎵 Starting audio playback with', audioQueueRef.current.length, 'chunks buffered');
+    }
+
+    // Process chunks in batches for smoother playback
+    let chunksProcessed = 0;
+    const maxChunksPerBatch = 5;
+    
+    while (audioQueueRef.current.length > 0 && chunksProcessed < maxChunksPerBatch) {
+      const audioBuffer = audioQueueRef.current.shift();
+      
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+      
+      // Schedule playback
+      source.start(nextPlayTimeRef.current);
+      scheduledSourcesRef.current.push(source);
+      
+      // Update next play time
+      nextPlayTimeRef.current += audioBuffer.duration;
+      chunksProcessed++;
+      
+      // Clean up finished sources
+      source.onended = () => {
+        const index = scheduledSourcesRef.current.indexOf(source);
+        if (index > -1) {
+          scheduledSourcesRef.current.splice(index, 1);
+        }
+      };
+    }
+
+    // Continue processing
+    if (isAudioEnabledRef.current) {
+      if (audioQueueRef.current.length > 0) {
+        // Process next batch quickly
+        setTimeout(() => processAudioQueue(), 20);
+      } else {
+        // Check buffer level
+        const bufferAhead = nextPlayTimeRef.current - audioContext.currentTime;
+        if (bufferAhead < 0.05) {
+          // Buffer underrun - reset and wait for more data
+          console.log('⚠️ Audio buffer underrun, waiting for data...');
+          nextPlayTimeRef.current = 0;
+        }
+        isPlayingAudioRef.current = false;
+        // Check again soon
+        setTimeout(() => {
+          if (audioQueueRef.current.length > 0) {
+            processAudioQueue();
+          }
+        }, 30);
+      }
+    } else {
+      isPlayingAudioRef.current = false;
+    }
+  };
+
+  const toggleAudio = async () => {
+    const newAudioState = !isAudioEnabled;
+    
+    if (newAudioState && audioContextRef.current) {
+      // Resume audio context on user interaction
+      console.log('🔊 Enabling audio...');
+      await audioContextRef.current.resume();
+      console.log('✅ Audio enabled, state:', audioContextRef.current.state);
+      
+      // Reset everything
+      audioQueueRef.current = [];
+      nextPlayTimeRef.current = 0;
+      isPlayingAudioRef.current = false;
+    } else if (!newAudioState) {
+      console.log('🔇 Disabling audio');
+      
+      // Stop all scheduled audio
+      scheduledSourcesRef.current.forEach(source => {
+        try {
+          source.stop();
+        } catch (e) {
+          // Ignore
+        }
+      });
+      scheduledSourcesRef.current = [];
+      audioQueueRef.current = [];
+      nextPlayTimeRef.current = 0;
+      isPlayingAudioRef.current = false;
+    }
+    
+    setIsAudioEnabled(newAudioState);
+    isAudioEnabledRef.current = newAudioState;
   };
 
   const displayFrame = (frameData) => {
@@ -419,6 +649,13 @@ const ScreenShare = () => {
             title={remoteControlEnabled ? 'Disable Remote Control' : 'Enable Remote Control'}
           >
             {remoteControlEnabled ? '🎮 Control ON' : '🎮 Control OFF'}
+          </button>
+          <button 
+            className={`control-btn ${isAudioEnabled ? 'active' : ''}`}
+            onClick={toggleAudio}
+            title={isAudioEnabled ? 'Mute Audio' : 'Unmute Audio'}
+          >
+            {isAudioEnabled ? '🔊 Audio ON' : '🔇 Audio OFF'}
           </button>
         </div>
       )}
