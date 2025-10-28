@@ -268,26 +268,26 @@ const ScreenShare = () => {
     const audioContext = audioContextRef.current;
     const currentTime = audioContext.currentTime;
 
-    // Wait for initial buffer - need at least 5 chunks for smooth playback
-    if (audioQueueRef.current.length < 5 && nextPlayTimeRef.current <= currentTime) {
+    // Minimal initial buffer for ultra-low latency - 2 chunks (~32ms)
+    if (audioQueueRef.current.length < 2 && nextPlayTimeRef.current <= currentTime) {
       isPlayingAudioRef.current = false;
       setTimeout(() => {
         if (audioQueueRef.current.length > 0) {
           processAudioQueue();
         }
-      }, 50);
+      }, 10);
       return;
     }
 
-    // Initialize nextPlayTime with good buffer (100ms)
+    // Initialize nextPlayTime with minimal buffer (30ms)
     if (nextPlayTimeRef.current < currentTime) {
-      nextPlayTimeRef.current = currentTime + 0.1;
+      nextPlayTimeRef.current = currentTime + 0.03;
       console.log('🎵 Starting audio playback with', audioQueueRef.current.length, 'chunks buffered');
     }
 
     // Process chunks in batches for smoother playback
     let chunksProcessed = 0;
-    const maxChunksPerBatch = 5;
+    const maxChunksPerBatch = 3;
     
     while (audioQueueRef.current.length > 0 && chunksProcessed < maxChunksPerBatch) {
       const audioBuffer = audioQueueRef.current.shift();
@@ -316,14 +316,13 @@ const ScreenShare = () => {
     // Continue processing
     if (isAudioEnabledRef.current) {
       if (audioQueueRef.current.length > 0) {
-        // Process next batch quickly
-        setTimeout(() => processAudioQueue(), 20);
+        // Process next batch very quickly
+        setTimeout(() => processAudioQueue(), 5);
       } else {
         // Check buffer level
         const bufferAhead = nextPlayTimeRef.current - audioContext.currentTime;
-        if (bufferAhead < 0.05) {
+        if (bufferAhead < 0.02) {
           // Buffer underrun - reset and wait for more data
-          console.log('⚠️ Audio buffer underrun, waiting for data...');
           nextPlayTimeRef.current = 0;
         }
         isPlayingAudioRef.current = false;
@@ -332,7 +331,7 @@ const ScreenShare = () => {
           if (audioQueueRef.current.length > 0) {
             processAudioQueue();
           }
-        }, 30);
+        }, 10);
       }
     } else {
       isPlayingAudioRef.current = false;
@@ -377,14 +376,10 @@ const ScreenShare = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     
-    // Cancel any pending render
-    if (rafId.current) {
-      cancelAnimationFrame(rafId.current);
-    }
-    
+    // Skip requestAnimationFrame for lower latency - render immediately
     const ctx = canvas.getContext('2d', { 
       alpha: false,
-      desynchronized: true,
+      desynchronized: true, // Allow async rendering for performance
       willReadFrequently: false
     });
     
@@ -392,21 +387,18 @@ const ScreenShare = () => {
     const img = imageCache.current;
     
     img.onload = () => {
-      // Use requestAnimationFrame for smooth rendering
-      rafId.current = requestAnimationFrame(() => {
-        // Resize canvas only if dimensions changed
-        if (canvas.width !== frameData.width || canvas.height !== frameData.height) {
-          canvas.width = frameData.width;
-          canvas.height = frameData.height;
-        }
-        
-        // Disable image smoothing for faster rendering
-        ctx.imageSmoothingEnabled = true; // Enable for better quality
-        ctx.imageSmoothingQuality = 'high'; // High quality scaling
-        
-        // Direct pixel-perfect rendering
-        ctx.drawImage(img, 0, 0, frameData.width, frameData.height);
-      });
+      // Resize canvas only if dimensions changed
+      if (canvas.width !== frameData.width || canvas.height !== frameData.height) {
+        canvas.width = frameData.width;
+        canvas.height = frameData.height;
+      }
+      
+      // Enable smoothing for better quality
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'medium'; // Balance of quality and speed
+      
+      // Direct pixel-perfect rendering - no RAF for lower latency
+      ctx.drawImage(img, 0, 0, frameData.width, frameData.height);
     };
     
     // Set source last to trigger load

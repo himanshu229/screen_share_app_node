@@ -28,10 +28,10 @@ const io = socketIo(server, {
   },
   transports: ['websocket', 'polling'],
   allowUpgrades: true,
-  pingTimeout: 60000,
-  pingInterval: 25000,
+  pingTimeout: 30000, // Reduced for faster detection
+  pingInterval: 10000, // More frequent pings for lower latency
   maxHttpBufferSize: 50e6, // 50MB buffer for HD frames
-  perMessageDeflate: false,
+  perMessageDeflate: false, // Disable compression for speed
   httpCompression: false
 });
 

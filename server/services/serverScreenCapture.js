@@ -5,9 +5,9 @@ class ServerScreenCapture {
   constructor() {
     this.isCapturing = false;
     this.captureInterval = null;
-    this.frameRate = 45; // Higher FPS for more real-time feel
-    this.quality = 75; // Good balance of quality and speed
-    this.scale = 0.75; // 75% scale for balance
+    this.frameRate = 60; // High FPS for low latency
+    this.quality = 85; // Higher quality for better image
+    this.scale = 0.8; // 80% scale - good balance
     this.frameCallbacks = new Set();
     this.lastScreenshot = null;
     this.frameBuffer = null; // Pre-allocated buffer
@@ -139,23 +139,23 @@ class ServerScreenCapture {
       const scaledWidth = Math.round(metadata.width * this.scale);
       const scaledHeight = Math.round(metadata.height * this.scale);
       
-      // High-quality processing: resize with best quality and compress
+      // Optimized processing: fast resize + good quality compression
       const processedImg = await sharpInstance
         .resize(scaledWidth, scaledHeight, {
           fit: 'inside',
-          kernel: 'lanczos3', // Best quality interpolation
+          kernel: 'cubic', // Good balance of speed and quality
           withoutEnlargement: true,
           fastShrinkOnLoad: true
         })
         .jpeg({ 
           quality: this.quality,
           progressive: false,
-          mozjpeg: true, // Better compression
-          chromaSubsampling: '4:2:0', // Balanced compression
-          trellisQuantisation: false, // Disable for speed
-          overshootDeringing: false, // Disable for speed
-          optimizeScans: false, // Disable for speed
-          optimizeCoding: true,
+          mozjpeg: true, // Better compression with minimal speed impact
+          chromaSubsampling: '4:2:0',
+          trellisQuantisation: false,
+          overshootDeringing: false,
+          optimizeScans: false,
+          optimizeCoding: true, // Slightly better compression
           force: true
         })
         .toBuffer({ resolveWithObject: false });

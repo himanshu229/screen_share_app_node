@@ -50,7 +50,7 @@ class AudioCapture:
     def __init__(self, server_url='http://localhost:3001'):
         self.server_url = server_url
         self.is_capturing = False
-        self.chunk_size = 2048  # Larger chunks (43ms at 48kHz) for stability
+        self.chunk_size = 768  # 16ms chunks at 48kHz - optimal for low latency
         self.sample_rate = 48000
         self.channels = 2
         self.audio = None
